@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>نظام إدارة الحلقات - Halaqa Management System</title>
+
+    <!-- Tailwind CSS via CDN (utility-first styling) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Fonts: Tajawal for premium Arabic typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet" />
+
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
+    <!-- Firebase Realtime Database SDK (v9 modular via compat layer for global use) -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+    <script>
+        // ============================================================
+        // Tailwind config — custom brand palette (deep corporate blues)
+        // ============================================================
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { 'tajawal': ['Tajawal', 'sans-serif'] },
+                    colors: {
+                        brand: {
+                            50:  '#eff6ff',
+                            100: '#dbeafe',
+                            500: '#3b82f6',
+                            700: '#1d4ed8',
+                            800: '#1e40af',
+                            900: '#1e3a8a',   // primary deep corporate blue
+                            950: '#172554'
+                        }
+                    },
+                    boxShadow: {
+                        'soft':  '0 4px 20px -2px rgba(15, 23, 42, 0.08)',
+                        'glow':  '0 0 0 4px rgba(30, 58, 138, 0.15)'
+                    }
+                }
+            }
+        };
+    </script>
+
+    <style>
+        /* ============================================================
+           Global base — premium feel, smooth transitions
+           ============================================================ */
+        html, body { font-family: 'Tajawal', sans-serif; }
+
+        body {
+            background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 50%, #f0f4ff 100%);
+            min-height: 100vh;
+        }
+
+        /* Smooth tab transitions */
+        .tab-panel {
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity .35s ease, transform .35s ease;
+            display: none;
+        }
+        .tab-panel.active {
+            opacity: 1;
+            transform: translateY(0);
+            display: block;
+        }
+
+        /* Button micro-interaction */
+        .btn-press {
+            transition: transform .12s ease, box-shadow .2s ease, background-color .2s ease;
+        }
+        .btn-press:hover { transform: translateY(-1px); }
+        .btn-press:active { transform: translateY(0) scale(.98); }
+
+        /* Rating pill styles */
+        .rating-btn {
+            transition: all .15s ease;
+            cursor: pointer;
+            user-select: none;
+        }
+        .rating-btn:hover { transform: scale(1.04); }
+        .rating-btn.selected {
+            background: #1e3a8a !important;
+            color: #fff !important;
+            box-shadow: 0 0 0 3px rgba(30, 58, 138, .25);
+        }
+
+        /* Animated spinner */
+        .spinner {
+            border: 3px solid rgba(255,255,255,.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            width: 18px; height: 18px;
+            display: inline-block;
+            animation: spin .8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Subtle toast slide-in */
+        .toast {
+            animation: slideIn .3s ease, fadeOut .3s ease 2.7s forwards;
+        }
+        @keyframes slideIn { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
+
+        /* Custom scrollbar for elegant feel */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Empty-state illustration */
+        .empty-illust {
+            width: 80px; height: 80px;
+            margin: 0 auto;
+            opacity: .6;
+        }
+    </style>
+</head>
+
+<body class="text-slate-800">
+
+    <!-- ============================================================
+         TOAST CONTAINER (live feedback to user)
+         ============================================================ -->
+    <div id="toast-container" class="fixed top-4 left-1/2 -translate-x-1/2 z-[100] space-y-2"></div>
+
+    <!-- ============================================================
+         APP ROOT — views swap in/out
+         ============================================================ -->
+    <div id="app"></div>
+
+    <!-- ============================================================
+         FIREBASE INITIALIZATION
+         Replace the placeholder values below with YOUR Firebase
+         project credentials from: Firebase Console → Project Settings
+         ============================================================ -->
+    <script>
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT.firebaseapp.com",
+            databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        // Initialize Firebase (compat — exposes window.firebase globally)
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        // Root node for the entire system — easy to scope/secure later
+        const ROOT = '/halakat_system/';
+    </script>
+
+    <script>
+        // ============================================================
+        // APP STATE (in-memory, no loops, no freezing)
+        // ============================================================
+        const state = {
+            currentUser: null,     // { role: 'teacher' | 'student', branch?, name? }
+            students: {},          // { quran: {name: {password, homeworkDone, rating, notes}}, rushdi: {...} }
+            activeTab: 'publish'   // teacher tab
+        };
+
+        // ============================================================
+        // UTILITIES
+        // ============================================================
+        const $ = (sel, root = document) => root.querySelector(sel);
+        const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+        function toast(message, type = 'success') {
+            const colors = {
+                success: 'bg-emerald-600',
+                error:   'bg-rose-600',
+                info:    'bg-brand-900',
+                warn:    'bg-amber-500'
+            };
+            const icons = {
+                success: 'fa-circle-check',
+                error:   'fa-circle-xmark',
+                info:    'fa-circle-info',
+                warn:    'fa-triangle-exclamation'
+            };
+            const node = document.createElement('div');
+            node.className = `toast text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3 ${colors[type] || colors.info}`;
+            node.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i><span class="font-medium">${message}</span>`;
+            $('#toast-container').appendChild(node);
+            setTimeout(() => node.remove(), 3000);
+        }
+
+        function escapeHTML(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => ({
+                '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+            }[c]));
+        }
+
+        function todayKey() {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        }
+
+        // ============================================================
+        // VIEW 1: LOGIN SCREEN
+        // ============================================================
+        function renderLogin() {
+            const app = $('#app');
+            app.innerHTML = `
+                <div class="min-h-screen flex items-center justify-center p-4">
+                    <div class="w-full max-w-md">
+                        <!-- Brand header -->
+                        <div class="text-center mb-8">
+                            <div class="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-brand-900 to-brand-700 shadow-lg shadow-brand-900/30 mb-4">
+                                <i class="fa-solid fa-book-quran text-white text-3xl"></i>
+                            </div>
+                            <h1 class="text-3xl font-extrabold text-brand-900">نظام إدارة الحلقات</h1>
+                            <p class="text-slate-500 mt-2 text-sm">منصة متابعة الطلاب والتقييم اليومي</p>
+                        </div>
+
+                        <!-- Login card -->
+                        <div class="bg-white rounded-2xl shadow-soft p-6 sm:p-8">
+                            <!-- Role toggle -->
+                            <div class="grid grid-cols-2 gap-2 bg-slate-100 p-1.5 rounded-xl mb-6">
+                                <button id="role-teacher" data-role="teacher" class="role-btn role-active px-3 py-3 rounded-lg font-bold text-sm transition">
+                                    🎓 دخول المدرس
+                                </button>
+                                <button id="role-student" data-role="student" class="role-btn px-3 py-3 rounded-lg font-bold text-sm text-slate-600 transition">
+                                    👤 دخول الطالب
+                                </button>
+                            </div>
+
+                            <!-- TEACHER FORM -->
+                            <form id="teacher-form" class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-bold text-slate-700 mb-2">
+                                        <i class="fa-solid fa-lock text-brand-900 ml-1"></i> كلمة المرور
+                                    </label>
+                                    <input type="password" id="teacher-pwd"
+                                        class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-900/30 focus:border-brand-900 outline-none transition"
+                                        placeholder="••••••" required />
+                                </div>
+                                <button type="submit"
+                                    class="btn-press w-full bg-brand-900 hover:bg-brand-800 text-white font-bold py-3 rounded-xl shadow-md">
+                                    <i class="fa-solid fa-arrow-left ml-2"></i> دخول
+                                </button>
+                            </form>
+
+                            <!-- STUDENT FORM -->
+                            <form id="student-form" class="space-y-4 hidden">
+                                <div>
+                                    <label class="block text-sm font-bold text-slate-700 mb-2">
+                                        <i class="fa-solid fa-users-rectangle text-brand-900 ml-1"></i> الفرع
+                                    </label>
+                                    <select id="student-branch" class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-900/30 focus:border-brand-900 outline-none transition bg-white" required>
+                                        <option value="">— اختر الفرع —</option>
+                                        <option value="quran">حلقة القرآن</option>
+                                        <option value="rushdi">حلقة الرشدي</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-bold text-slate-700 mb-2">
+                                        <i class="fa-solid fa-user text-brand-900 ml-1"></i> الاسم
+                                    </label>
+                                    <input type="text" id="student-name"
+                                        class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-900/30 focus:border-brand-900 outline-none transition"
+                                        placeholder="اسمك الكامل" required />
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-bold text-slate-700 mb-2">
+                                        <i class="fa-solid fa-key text-brand-900 ml-1"></i> كلمة المرور
+                                    </label>
+                                    <input type="password" id="student-pwd"
+                                        class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-900/30 focus:border-brand-900 outline-none transition"
+                                        placeholder="••••••" required />
+                                </div>
+                                <button type="submit"
+                                    class="btn-press w-full bg-brand-900 hover:bg-brand-800 text-white font-bold py-3 rounded-xl shadow-md">
+                                    <i class="fa-solid fa-arrow-left ml-2"></i> دخول
+                                </button>
+                            </form>
+                        </div>
+
+                        <p class="text-center text-xs text-slate-400 mt-6">
+                            © ${new Date().getFullYear()} نظام إدارة الحلقات — جميع الحقوق محفوظة
+                        </p>
+                    </div>
+                </div>
+            `;
+
+            // Role toggle logic
+            $$('.role-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    $$('.role-btn').forEach(b => b.classList.remove('role-active', 'bg-white', 'shadow-sm', 'text-brand-900'));
+                    btn.classList.add('role-active', 'bg-white', 'shadow-sm', 'text-brand-900');
+                    const role = btn.dataset.role;
+                    $('#teacher-form').classList.toggle('hidden', role !== 'teacher');
+                    $('#student-form').classList.toggle('hidden', role !== 'student');
+                });
+            });
+            // Default state
+            $('#role-teacher').classList.add('bg-white', 'shadow-sm', 'text-brand-900');
+
+            // Teacher login
+            $('#teacher-form').addEventListener('submit', e => {
+                e.preventDefault();
+                const pwd = $('#teacher-pwd').value;
+                if (pwd === 'anas') {
+                    state.currentUser = { role: 'teacher' };
+                    toast('مرحباً أستاذ أنس 👋', 'success');
+                    renderTeacherDashboard();
+                    attachGlobalListeners();
+                } else {
+                    toast('كلمة المرور غير صحيحة', 'error');
+                }
+            });
+
+            // Student login
+            $('#student-form').addEventListener('submit', e => {
+                e.preventDefault();
+                const branch = $('#student-branch').value;
+                const name   = $('#student-name').value.trim();
+                const pwd    = $('#student-pwd').value;
+
+                if (!branch || !name || !pwd) {
+                    return toast('يرجى تعبئة جميع الحقول', 'warn');
+                }
+
+                // Look up student in cache
+                const s = state.students[branch]?.[name];
+                if (!s) return toast('لا يوجد طالب بهذه البيانات', 'error');
+                if (s.password !== pwd) return toast('كلمة المرور غير صحيحة', 'error');
+
+                state.currentUser = { role: 'student', branch, name };
+                toast(`أهلاً بك ${name} 🌟`, 'success');
+                renderStudentDashboard();
+            });
+        }
+
+        // ============================================================
+        // VIEW 2: TEACHER DASHBOARD
+        // ============================================================
+        function renderTeacherDashboard() {
+            const app = $('#app');
+            app.innerHTML = `
+                <!-- TOP NAV -->
+                <header class="bg-white shadow-soft sticky top-0 z-40">
+                    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-900 to-brand-700 flex items-center justify-center shadow-md">
+                                <i class="fa-solid fa-book-quran text-white"></i>
+                            </div>
+                            <div>
+                                <h1 class="font-extrabold text-brand-900 text-lg leading-tight">لوحة المدرس</h1>
+                                <p class="text-xs text-slate-500">الأستاذ أنس</p>
+                            </div>
+                        </div>
+                        <button id="logout-btn" class="btn-press text-sm font-bold text-slate-600 hover:text-rose-600 flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-rose-50">
+                            <i class="fa-solid fa-right-from-bracket"></i> خروج
+                        </button>
+                    </div>
+
+                    <!-- TABS -->
+                    <div class="max-w-6xl mx-auto px-4">
+                        <div class="flex gap-1 overflow-x-auto">
+                            <button data-tab="publish"  class="tab-btn px-4 py-3 font-bold text-sm border-b-4 border-brand-900 text-brand-900 whitespace-nowrap">
+                                <i class="fa-solid fa-cloud-arrow-up ml-2"></i>نشر وتقييم
+                            </button>
+                            <button data-tab="tracker"  class="tab-btn px-4 py-3 font-bold text-sm border-b-4 border-transparent text-slate-500 hover:text-brand-900 whitespace-nowrap">
+                                <i class="fa-solid fa-clipboard-check ml-2"></i>سجل الواجبات
+                            </button>
+                            <button data-tab="students" class="tab-btn px-4 py-3 font-bold text-sm border-b-4 border-transparent text-slate-500 hover:text-brand-900 whitespace-nowrap">
+                                <i class="fa-solid fa-user-gear ml-2"></i>إدارة الطلاب
+                            </button>
+                        </div>
+                    </div>
+                </header>
+
+                <main class="max-w-6xl mx-auto px-4 py-6">
+                    <!-- TAB: PUBLISH & EVALUATE -->
+                    <section id="tab-publish" class="tab-panel active">
+                        <!-- LESSON PUBLISHER -->
+                        <div class="bg-white rounded-2xl shadow-soft p-5 sm:p-6 mb-6">
+                            <h2 class="text-lg font-extrabold text-brand-900 mb-4 flex items-center gap-2">
+                                <i class="fa-solid fa-bullhorn text-brand-700"></i> نشر الدرس اليومي
+                            </h2>
+                            <div class="grid md:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-bold text-slate-700 mb-2">عنوان الدرس</label>
+                                    <input id="lesson-title" type="text"
+                                        class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-900/30 focus:border-brand-900 outline-none"
+                                        placeholder="مثال: سورة البقرة - آيات 1-10" />
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-bold text-slate-700 mb-2">الواجب</label>
+                                    <input id="lesson-hw" type="text"
+                                        class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-900/30 focus:border-brand-900 outline-none"
+                                        placeholder="مثال: حفظ الآيات 5-7" />
+                                </div>
+                            </div>
+                            <div class="mt-4 flex flex-wrap gap-2">
+                                <button id="publish-btn" class="btn-press bg-brand-900 hover:bg-brand-800 text-white font-bold px-5 py-3 rounded-xl shadow-md">
+                                    <i class="fa-solid fa-cloud-arrow-up ml-2"></i> نشر إلى السحابة
+                                </button>
+                                <div class="flex items-center gap-2 px-3">
+                                    <label class="text-sm font-bold text-slate-600">الفرع:</label>
+                                    <select id="eval-branch" class="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white">
+                                        <option value="quran">حلقة القرآن</option>
+                                        <option value="rushdi">حلقة الرشدي</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div id="publish-status" class="mt-3 text-sm"></div>
+                        </div>
+
+                        <!-- EVALUATION TABLE -->
+                        <div class="bg-white rounded-2xl shadow-soft p-5 sm:p-6">
+                            <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+                                <h2 class="text-lg font-extrabold text-brand-900 flex items-center gap-2">
+                                    <i class="fa-solid fa-star-half-stroke text-brand-700"></i> تقييم الطلاب
+                                </h2>
+                                <span class="text-xs text-slate-500">يتم الحفظ تلقائياً عند التغيير</span>
+                            </div>
+                            <div id="eval-table" class="space-y-3"></div>
+                        </div>
+                    </section>
+
+                    <!-- TAB: HOMEWORK TRACKER -->
+                    <section id="tab-tracker" class="tab-panel">
+                        <div class="bg-white rounded-2xl shadow-soft p-5 sm:p-6">
+                            <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+                                <h2 class="text-lg font-extrabold text-brand-900 flex items-center gap-2">
+                                    <i class="fa-solid fa-clipboard-check text-brand-700"></i> سجل الواجبات — اليوم
+                                </h2>
+                                <div class="flex items-center gap-2">
+                                    <label class="text-sm font-bold text-slate-600">الفرع:</label>
+                                    <select id="tracker-branch" class="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white">
+                                        <option value="quran">حلقة القرآن</option>
+                                        <option value="rushdi">حلقة الرشدي</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div id="tracker-list" class="space-y-2"></div>
+                        </div>
+                    </section>
+
+                    <!-- TAB: STUDENT MANAGER -->
+                    <section id="tab-students" class="tab-panel">
+                        <div class="bg-white rounded-2xl shadow-soft p-5 sm:p-6 mb-6">
+                            <h2 class="text-lg font-extrabold text-brand-900 mb-4 flex items-center gap-2">
+                                <i class="fa-solid fa-user-plus text-brand-700"></i> إضافة طالب جديد
+                            </h2>
+                            <form id="add-student-form" class="grid sm:grid-cols-4 gap-3">
+                                <input id="new-name" type="text" placeholder="اسم الطالب"
+                                    class="px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-900/30 focus:border-brand-900 outline-none" required />
+                                <input id="new-pwd" type="text" placeholder="كلمة المرور"
+                                    class="px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-900/30 focus:border-brand-900 outline-none" required />
+                                <select id="new-branch" class="px-4 py-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-brand-900/30 focus:border-brand-900 outline-none">
+                                    <option value="quran">حلقة القرآن</option>
+                                    <option value="rushdi">حلقة الرشدي</option>
+                                </select>
+                                <button type="submit" class="btn-press bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md">
+                                    <i class="fa-solid fa-plus ml-2"></i> إضافة
+                                </button>
+                            </form>
+                        </div>
+
+                        <div class="bg-white rounded-2xl shadow-soft p-5 sm:p-6">
+                            <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+                                <h2 class="text-lg font-extrabold text-brand-900 flex items-center gap-2">
+                                    <i class="fa-solid fa-list text-brand-700"></i> قائمة الطلاب
+                                </h2>
+                                <select id="list-branch" class="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white">
+                                    <option value="quran">حلقة القرآن</option>
+                                    <option value="rushdi">حلقة الرشدي</option>
+                                </select>
+                            </div>
+                            <div id="students-list" class="space-y-2"></div>
+                        </div>
+                    </section>
+                </main>
+            `;
+
+            // Logout
+            $('#logout-btn').addEventListener('click', () => {
+                state.currentUser = null;
+                toast('تم تسجيل الخروج', 'info');
+                renderLogin();
+            });
+
+            // Tabs
+            $$('.tab-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const tab = btn.dataset.tab;
+                    state.activeTab = tab;
+                    $$('.tab-btn').forEach(b => {
+                        b.classList.remove('border-brand-900', 'text-brand-900');
+                        b.classList.add('border-transparent', 'text-slate-500');
+                    });
+                    btn.classList.add('border-brand-900', 'text-brand-900');
+                    btn.classList.remove('border-transparent', 'text-slate-500');
+                    $$('.tab-panel').forEach(p => p.classList.remove('active'));
+                    $(`#tab-${tab}`).classList.add('active');
+                    if (tab === 'tracker') renderTracker();
+                    if (tab === 'students') renderStudentsList();
+                });
+            });
+
+            // Lesson publish
+            $('#publish-btn').addEventListener('click', async () => {
+                const branch = $('#eval-branch').value;
+                const title  = $('#lesson-title').value.trim();
+                const hw     = $('#lesson-hw').value.trim();
+                if (!title || !hw) return toast('يرجى إدخال عنوان الدرس والواجب', 'warn');
+
+                const status = $('#publish-status');
+                status.innerHTML = '<span class="text-brand-700"><span class="spinner align-middle ml-2"></span> جاري النشر...</span>';
+
+                try {
+                    const ref = db.ref(`${ROOT}${branch}/daily_lessons/${todayKey()}`);
+                    await ref.set({
+                        title,
+                        homework: hw,
+                        publishedAt: firebase.database.ServerValue.TIMESTAMP
+                    });
+                    status.innerHTML = '<span class="text-emerald-600 font-bold"><i class="fa-solid fa-circle-check ml-1"></i> تم النشر بنجاح</span>';
+                    toast('تم نشر الدرس على السحابة ☁️', 'success');
+                    // Clear inputs
+                    $('#lesson-title').value = '';
+                    $('#lesson-hw').value = '';
+                    setTimeout(() => status.innerHTML = '', 3000);
+                } catch (err) {
+                    status.innerHTML = `<span class="text-rose-600 font-bold">فشل النشر: ${err.message}</span>`;
+                    toast('فشل النشر، تحقق من إعدادات Firebase', 'error');
+                }
+            });
+
+            // Branch change re-renders eval table
+            $('#eval-branch').addEventListener('change', renderEvalTable);
+            $('#tracker-branch').addEventListener('change', renderTracker);
+            $('#list-branch').addEventListener('change', renderStudentsList);
+
+            // Add student
+            $('#add-student-form').addEventListener('submit', async e => {
+                e.preventDefault();
+                const name   = $('#new-name').value.trim();
+                const pwd    = $('#new-pwd').value.trim();
+                const branch = $('#new-branch').value;
+                if (!name || !pwd) return toast('الاسم وكلمة المرور مطلوبان', 'warn');
+
+                try {
+                    await db.ref(`${ROOT}${branch}/students/${name}`).set({
+                        password: pwd,
+                        rating: '',
+                        notes: '',
+                        homeworkDone: false,
+                        createdAt: firebase.database.ServerValue.TIMESTAMP
+                    });
+                    toast(`تمت إضافة الطالب ${name} ✅`, 'success');
+                    e.target.reset();
+                    renderStudentsList();
+                } catch (err) {
+                    toast('فشل إضافة الطالب: ' + err.message, 'error');
+                }
+            });
+
+            // Initial renders
+            renderEvalTable();
+        }
+
+        // ---- TEACHER: Evaluation table ----
+        function renderEvalTable() {
+            const branch = $('#eval-branch')?.value || 'quran';
+            const list = state.students[branch] || {};
+            const container = $('#eval-table');
+
+            const names = Object.keys(list).sort((a, b) => a.localeCompare(b, 'ar'));
+
+            if (names.length === 0) {
+                container.innerHTML = emptyState('fa-users', 'لا يوجد طلاب في هذا الفرع بعد', 'أضف طلاباً من تبويب "إدارة الطلاب"');
+                return;
+            }
+
+            // Build rows efficiently (single innerHTML write per render)
+            const ratings = [
+                { val: 'ضعيف',     color: 'bg-rose-100 text-rose-700' },
+                { val: 'جيد',       color: 'bg-amber-100 text-amber-700' },
+                { val: 'جيد جداً',  color: 'bg-sky-100 text-sky-700' },
+                { val: 'ممتاز',     color: 'bg-emerald-100 text-emerald-700' },
+                { val: 'متألق ⭐',  color: 'bg-violet-100 text-violet-700' }
+            ];
+
+            container.innerHTML = names.map(name => {
+                const s = list[name] || {};
+                const currentRating = s.rating || '';
+                const notes = s.notes || '';
+                return `
+                    <div class="border border-slate-200 rounded-xl p-4 hover:border-brand-900/30 hover:shadow-sm transition">
+                        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+                            <div class="flex items-center gap-2">
+                                <div class="w-9 h-9 rounded-full bg-gradient-to-br from-brand-900 to-brand-700 text-white font-bold flex items-center justify-center text-sm">
+                                    ${escapeHTML(name.charAt(0))}
+                                </div>
+                                <h3 class="font-extrabold text-slate-800">${escapeHTML(name)}</h3>
+                            </div>
+                            <span class="text-xs text-slate-400">${s.homeworkDone ? '<i class="fa-solid fa-circle-check text-emerald-500"></i> سَلّم الواجب' : '<i class="fa-regular fa-circle text-slate-300"></i> لم يسلّم'}</span>
+                        </div>
+                        <div class="flex flex-wrap gap-2 mb-3" data-rating-group="${branch}|${escapeHTML(name)}">
+                            ${ratings.map(r => `
+                                <button type="button" data-rating="${r.val}" class="rating-btn px-3 py-1.5 rounded-lg text-xs font-bold ${r.color} ${currentRating === r.val ? 'selected' : ''}">
+                                    ${r.val}
+                                </button>
+                            `).join('')}
+                        </div>
+                        <input type="text" data-notes="${branch}|${escapeHTML(name)}" value="${escapeHTML(notes)}"
+                            placeholder="ملاحظة للمعلم..."
+                            class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-900/30 focus:border-brand-900 outline-none" />
+                    </div>
+                `;
+            }).join('');
+
+            // Attach listeners (event delegation pattern)
+            $$('.rating-btn', container).forEach(btn => {
+                btn.addEventListener('click', () => saveRating(branch, btn));
+            });
+            $$('input[data-notes]', container).forEach(inp => {
+                inp.addEventListener('change', () => saveNotes(branch, inp));
+            });
+        }
+
+        async function saveRating(branch, btn) {
+            const [b, name] = btn.closest('[data-rating-group]').dataset.ratingGroup.split('|');
+            const rating = btn.dataset.rating;
+            try {
+                await db.ref(`${ROOT}${b}/students/${name}/rating`).set(rating);
+                // Update local state + visual selection
+                if (!state.students[b][name]) state.students[b][name] = {};
+                state.students[b][name].rating = rating;
+                btn.parentElement.querySelectorAll('.rating-btn').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                toast(`تم تقييم ${name}: ${rating}`, 'success');
+            } catch (err) {
+                toast('فشل الحفظ: ' + err.message, 'error');
+            }
+        }
+
+        async function saveNotes(branch, input) {
+            const [b, name] = input.dataset.notes.split('|');
+            try {
+                await db.ref(`${ROOT}${b}/students/${name}/notes`).set(input.value);
+                if (!state.students[b][name]) state.students[b][name] = {};
+                state.students[b][name].notes = input.value;
+                toast('تم حفظ الملاحظة', 'success');
+            } catch (err) {
+                toast('فشل الحفظ: ' + err.message, 'error');
+            }
+        }
+
+        // ---- TEACHER: Homework tracker ----
+        function renderTracker() {
+            const branch = $('#tracker-branch')?.value || 'quran';
+            const list = state.students[branch] || {};
+            const names = Object.keys(list).sort((a, b) => a.localeCompare(b, 'ar'));
+            const container = $('#tracker-list');
+
+            if (names.length === 0) {
+                container.innerHTML = emptyState('fa-clipboard', 'لا يوجد طلاب في هذا الفرع', '');
+                return;
+            }
+
+            const done    = names.filter(n => list[n].homeworkDone);
+            const pending = names.filter(n => !list[n].homeworkDone);
+
+            container.innerHTML = `
+                <!-- Summary -->
+                <div class="grid grid-cols-2 gap-3 mb-4">
+                    <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
+                        <div class="text-3xl font-extrabold text-emerald-700">${done.length}</div>
+                        <div class="text-xs font-bold text-emerald-600 mt-1">سلّموا الواجب</div>
+                    </div>
+                    <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
+                        <div class="text-3xl font-extrabold text-amber-700">${pending.length}</div>
+                        <div class="text-xs font-bold text-amber-600 mt-1">لم يسلّموا</div>
+                    </div>
+                </div>
+
+                <!-- Live updates banner -->
+                <div class="flex items-center gap-2 text-xs text-slate-500 mb-3">
+                    <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    تحديث مباشر
+                </div>
+
+                ${done.length > 0 ? `
+                    <div class="mb-4">
+                        <h3 class="text-sm font-extrabold text-emerald-700 mb-2">
+                            <i class="fa-solid fa-circle-check ml-1"></i> المُسلِّمون
+                        </h3>
+                        <div class="space-y-2">
+                            ${done.map(n => `
+                                <div class="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+                                    <div class="flex items-center gap-2">
+                                        <i class="fa-solid fa-circle-check text-emerald-600"></i>
+                                        <span class="font-bold text-slate-800">${escapeHTML(n)}</span>
+                                    </div>
+                                    <span class="text-xs text-emerald-600">✓ تم</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+
+                ${pending.length > 0 ? `
+                    <div>
+                        <h3 class="text-sm font-extrabold text-amber-700 mb-2">
+                            <i class="fa-solid fa-hourglass-half ml-1"></i> في الانتظار
+                        </h3>
+                        <div class="space-y-2">
+                            ${pending.map(n => `
+                                <div class="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                                    <div class="flex items-center gap-2">
+                                        <i class="fa-regular fa-circle text-slate-400"></i>
+                                        <span class="font-bold text-slate-700">${escapeHTML(n)}</span>
+                                    </div>
+                                    <span class="text-xs text-slate-400">بانتظار التسليم</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+            `;
+        }
+
+        // ---- TEACHER: Students list (with delete) ----
+        function renderStudentsList() {
+            const branch = $('#list-branch')?.value || 'quran';
+            const list = state.students[branch] || {};
+            const names = Object.keys(list).sort((a, b) => a.localeCompare(b, 'ar'));
+            const container = $('#students-list');
+
+            if (names.length === 0) {
+                container.innerHTML = emptyState('fa-user-graduate', 'لا يوجد طلاب بعد', 'أضف طالباً جديداً من النموذج بالأعلى');
+                return;
+            }
+
+            container.innerHTML = names.map(name => {
+                const s = list[name];
+                return `
+                    <div class="flex items-center justify-between border border-slate-200 rounded-xl px-4 py-3 hover:border-brand-900/30 transition">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-brand-900 to-brand-700 text-white font-bold flex items-center justify-center">
+                                ${escapeHTML(name.charAt(0))}
+                            </div>
+                            <div>
+                                <div class="font-extrabold text-slate-800">${escapeHTML(name)}</div>
+                                <div class="text-xs text-slate-500">كلمة المرور: ${escapeHTML(s.password || '—')}</div>
+                            </div>
+                        </div>
+                        <button data-del="${branch}|${escapeHTML(name)}"
+                            class="btn-press text-rose-600 hover:bg-rose-50 px-3 py-2 rounded-lg text-sm font-bold">
+                            <i class="fa-solid fa-trash ml-1"></i> حذف
+                        </button>
+                    </div>
+                `;
+            }).join('');
+
+            $$('button[data-del]', container).forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const [b, n] = btn.dataset.del.split('|');
+                    if (!confirm(`هل تريد حذف الطالب "${n}"؟`)) return;
+                    try {
+                        await db.ref(`${ROOT}${b}/students/${n}`).remove();
+                        toast(`تم حذف الطالب ${n}`, 'success');
+                    } catch (err) {
+                        toast('فشل الحذف: ' + err.message, 'error');
+                    }
+                });
+            });
+        }
+
+        // ============================================================
+        // VIEW 3: STUDENT DASHBOARD
+        // ============================================================
+        function renderStudentDashboard() {
+            const { branch, name } = state.currentUser;
+            const lessonPath = `${ROOT}${branch}/daily_lessons/${todayKey()}`;
+            const myPath     = `${ROOT}${branch}/students/${name}`;
+
+            const app = $('#app');
+            app.innerHTML = `
+                <header class="bg-white shadow-soft sticky top-0 z-40">
+                    <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-900 to-brand-700 flex items-center justify-center shadow-md">
+                                <i class="fa-solid fa-book-quran text-white"></i>
+                            </div>
+                            <div>
+                                <h1 class="font-extrabold text-brand-900 text-lg leading-tight">حلقتي</h1>
+                                <p class="text-xs text-slate-500">${branch === 'quran' ? 'حلقة القرآن' : 'حلقة الرشدي'} — ${escapeHTML(name)}</p>
+                            </div>
+                        </div>
+                        <button id="logout-btn" class="btn-press text-sm font-bold text-slate-600 hover:text-rose-600 flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-rose-50">
+                            <i class="fa-solid fa-right-from-bracket"></i> خروج
+                        </button>
+                    </div>
+                </header>
+
+                <main class="max-w-3xl mx-auto px-4 py-6 space-y-6">
+                    <!-- HERO: Today's Lesson -->
+                    <section id="hero-lesson" class="bg-gradient-to-br from-brand-900 to-brand-700 text-white rounded-2xl shadow-lg p-6 sm:p-8 relative overflow-hidden">
+                        <div class="absolute -top-10 -left-10 w-40 h-40 bg-white/10 rounded-full"></div>
+                        <div class="absolute -bottom-12 -right-8 w-48 h-48 bg-white/5 rounded-full"></div>
+                        <div class="relative">
+                            <div class="flex items-center gap-2 text-brand-100 text-sm font-bold mb-2">
+                                <i class="fa-solid fa-calendar-day"></i>
+                                درس اليوم
+                            </div>
+                            <h2 id="hero-title" class="text-2xl sm:text-3xl font-extrabold mb-3">— جاري التحميل —</h2>
+                            <div class="bg-white/10 backdrop-blur rounded-xl p-4">
+                                <div class="text-xs font-bold text-brand-100 mb-1">
+                                    <i class="fa-solid fa-clipboard-list ml-1"></i> الواجب
+                                </div>
+                                <div id="hero-hw" class="text-lg font-bold">—</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- HOMEWORK ACTION -->
+                    <section class="bg-white rounded-2xl shadow-soft p-5 sm:p-6">
+                        <h2 class="text-lg font-extrabold text-brand-900 mb-4 flex items-center gap-2">
+                            <i class="fa-solid fa-pen-to-square text-brand-700"></i> تسليم الواجب
+                        </h2>
+                        <label id="hw-toggle" class="flex items-center justify-between cursor-pointer p-4 border-2 border-slate-200 rounded-xl hover:border-brand-900/40 transition">
+                            <div class="flex items-center gap-3">
+                                <div class="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center">
+                                    <i class="fa-solid fa-check text-emerald-600 text-xl"></i>
+                                </div>
+                                <div>
+                                    <div class="font-extrabold text-slate-800">أتممت الواجب</div>
+                                    <div id="hw-status-text" class="text-xs text-slate-500">اضغط للتأكيد</div>
+                                </div>
+                            </div>
+                            <div class="relative">
+                                <input id="hw-checkbox" type="checkbox" class="sr-only peer" />
+                                <div class="w-14 h-8 bg-slate-300 peer-checked:bg-emerald-500 rounded-full transition"></div>
+                                <div class="absolute top-1 right-1 w-6 h-6 bg-white rounded-full shadow peer-checked:translate-x-[-24px] transition"></div>
+                            </div>
+                        </label>
+                    </section>
+
+                    <!-- PERSONAL SCORECARD -->
+                    <section class="bg-white rounded-2xl shadow-soft p-5 sm:p-6">
+                        <h2 class="text-lg font-extrabold text-brand-900 mb-4 flex items-center gap-2">
+                            <i class="fa-solid fa-medal text-brand-700"></i> تقييمي
+                        </h2>
+                        <div id="my-score" class="grid sm:grid-cols-2 gap-3">
+                            <div class="border border-slate-200 rounded-xl p-4">
+                                <div class="text-xs font-bold text-slate-500 mb-1">التقييم الحالي</div>
+                                <div id="my-rating" class="text-xl font-extrabold text-brand-900">—</div>
+                            </div>
+                            <div class="border border-slate-200 rounded-xl p-4">
+                                <div class="text-xs font-bold text-slate-500 mb-1">ملاحظة المعلم</div>
+                                <div id="my-notes" class="text-sm text-slate-700">—</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- LEADERBOARD -->
+                    <section class="bg-white rounded-2xl shadow-soft p-5 sm:p-6">
+                        <h2 class="text-lg font-extrabold text-brand-900 mb-4 flex items-center gap-2">
+                            <i class="fa-solid fa-trophy text-brand-700"></i> لوحة المتنافسين
+                        </h2>
+                        <div id="leaderboard" class="space-y-2"></div>
+                    </section>
+                </main>
+            `;
+
+            $('#logout-btn').addEventListener('click', () => {
+                state.currentUser = null;
+                toast('تم تسجيل الخروج', 'info');
+                // Remove per-user listener ref (if any)
+                if (window._myLessonListener) window._myLessonListener.off();
+                if (window._myStudentListener) window._myStudentListener.off();
+                if (window._lbListener) window._lbListener.off();
+                renderLogin();
+            });
+
+            // ---- LISTEN to today's lesson (one-time) ----
+            const lessonRef = db.ref(lessonPath);
+            window._myLessonListener = lessonRef.on('value', snap => {
+                const data = snap.val();
+                if (!data) {
+                    $('#hero-title').textContent = 'لم يُنشر درس بعد';
+                    $('#hero-hw').textContent = 'سيظهر الواجب هنا فور نشر المعلم';
+                    return;
+                }
+                $('#hero-title').textContent = data.title || '—';
+                $('#hero-hw').textContent = data.homework || '—';
+            });
+
+            // ---- LISTEN to my own student record (live rating/notes + hw) ----
+            const myRef = db.ref(myPath);
+            window._myStudentListener = myRef.on('value', snap => {
+                const data = snap.val() || {};
+                const hwDone = !!data.homeworkDone;
+                $('#hw-checkbox').checked = hwDone;
+                $('#hw-status-text').textContent = hwDone ? 'تم التسليم ✓' : 'اضغط للتأكيد';
+                $('#hw-toggle').classList.toggle('border-emerald-400', hwDone);
+                $('#hw-toggle').classList.toggle('bg-emerald-50/50', hwDone);
+                $('#my-rating').textContent = data.rating || 'لم يتم التقييم بعد';
+                $('#my-notes').textContent  = data.notes  || 'لا توجد ملاحظات';
+            });
+
+            // ---- LISTEN to all classmates (leaderboard) ----
+            const lbRef = db.ref(`${ROOT}${branch}/students`);
+            window._lbListener = lbRef.on('value', snap => {
+                const all = snap.val() || {};
+                const container = $('#leaderboard');
+                const names = Object.keys(all).sort((a, b) => a.localeCompare(b, 'ar'));
+
+                if (names.length === 0) {
+                    container.innerHTML = emptyState('fa-trophy', 'لا يوجد زملاء بعد', '');
+                    return;
+                }
+
+                // Rank by rating
+                const rankMap = { 'متألق ⭐': 5, 'ممتاز': 4, 'جيد جداً': 3, 'جيد': 2, 'ضعيف': 1, '': 0 };
+                const sorted = names.slice().sort((a, b) => (rankMap[all[b].rating] || 0) - (rankMap[all[a].rating] || 0));
+
+                container.innerHTML = sorted.map((n, i) => {
+                    const s = all[n];
+                    const isMe = n === name;
+                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `<span class="text-slate-400 font-bold text-sm">${i+1}</span>`;
+                    return `
+                        <div class="flex items-center justify-between p-3 rounded-xl border ${isMe ? 'border-brand-900 bg-brand-50' : 'border-slate-200'}">
+                            <div class="flex items-center gap-3">
+                                <div class="w-8 text-center">${medal}</div>
+                                <div>
+                                    <div class="font-bold ${isMe ? 'text-brand-900' : 'text-slate-800'}">
+                                        ${escapeHTML(n)} ${isMe ? '<span class="text-xs">(أنت)</span>' : ''}
+                                    </div>
+                                    ${s.notes ? `<div class="text-xs text-slate-500 mt-0.5"><i class="fa-solid fa-comment-dots ml-1"></i>${escapeHTML(s.notes)}</div>` : ''}
+                                </div>
+                            </div>
+                            <div class="text-left">
+                                <span class="inline-block px-3 py-1 rounded-lg text-xs font-bold ${ratingColor(s.rating)}">
+                                    ${escapeHTML(s.rating || '—')}
+                                </span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            });
+
+            // ---- HOMEWORK TOGGLE: instant cloud sync ----
+            $('#hw-checkbox').addEventListener('change', async (e) => {
+                const newVal = e.target.checked;
+                try {
+                    await db.ref(`${myPath}/homeworkDone`).set(newVal);
+                    toast(newVal ? 'تم تسليم الواجب ✓ أحسنت!' : 'تم إلغاء التأكيد', newVal ? 'success' : 'info');
+                } catch (err) {
+                    toast('فشل الحفظ: ' + err.message, 'error');
+                    e.target.checked = !newVal; // revert
+                }
+            });
+        }
+
+        function ratingColor(r) {
+            switch (r) {
+                case 'متألق ⭐': return 'bg-violet-100 text-violet-700';
+                case 'ممتاز':    return 'bg-emerald-100 text-emerald-700';
+                case 'جيد جداً': return 'bg-sky-100 text-sky-700';
+                case 'جيد':      return 'bg-amber-100 text-amber-700';
+                case 'ضعيف':    return 'bg-rose-100 text-rose-700';
+                default:         return 'bg-slate-100 text-slate-500';
+            }
+        }
+
+        // ============================================================
+        // EMPTY STATE HELPER
+        // ============================================================
+        function emptyState(icon, title, sub) {
+            return `
+                <div class="text-center py-12">
+                    <div class="empty-illust bg-slate-100 rounded-full flex items-center justify-center mb-4">
+                        <i class="fa-solid ${icon} text-slate-400 text-3xl"></i>
+                    </div>
+                    <h3 class="font-extrabold text-slate-700 mb-1">${escapeHTML(title)}</h3>
+                    ${sub ? `<p class="text-sm text-slate-500">${escapeHTML(sub)}</p>` : ''}
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // GLOBAL FIREBASE LISTENERS
+        // Sync `state.students` for both branches — runs ONCE
+        // ============================================================
+        function attachGlobalListeners() {
+            ['quran', 'rushdi'].forEach(branch => {
+                db.ref(`${ROOT}${branch}/students`).on('value', snap => {
+                    state.students[branch] = snap.val() || {};
+                    // Re-render whichever teacher view is active
+                    if (state.currentUser?.role === 'teacher') {
+                        if (state.activeTab === 'publish')  renderEvalTable();
+                        if (state.activeTab === 'tracker')  renderTracker();
+                        if (state.activeTab === 'students') renderStudentsList();
+                    }
+                });
+            });
+        }
+
+        // ============================================================
+        // BOOT
+        // ============================================================
+        window.addEventListener('DOMContentLoaded', () => {
+            renderLogin();
+            // Pre-warm the students cache so student login works on first attempt
+            ['quran', 'rushdi'].forEach(branch => {
+                db.ref(`${ROOT}${branch}/students`).once('value').then(snap => {
+                    if (!state.students[branch]) state.students[branch] = snap.val() || {};
+                });
+            });
+        });
+    </script>
+</body>
+</html>
